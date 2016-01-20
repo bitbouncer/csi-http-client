@@ -9,7 +9,7 @@
 #include <boost/log/expressions.hpp>
 #include <json_spirit/json_spirit.h>
 #include <csi_http_client/http_client.h>
-#include <csi_http_client/avro_json_spirit_encoding.h>
+#include <csi_http_common/encoding/avro_json_spirit_encoding.h>
 
 struct sample_data_req1
 {
