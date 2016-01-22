@@ -373,6 +373,7 @@ namespace csi
             //v->push_back(s);
             //result = size * nmemb;
         }
+        result = size * nmemb;
         return result;
     }
 
