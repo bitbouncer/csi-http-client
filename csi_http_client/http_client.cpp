@@ -16,10 +16,21 @@
 #include <boost/log/expressions.hpp>
 #include <boost/thread/mutex.hpp>
 #include <boost/thread/condition_variable.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 #include "http_client.h"
 
 namespace csi
 {
+    std::string http_client::call_context::get_rx_header(const std::string& header) const
+    {
+        for (std::vector<csi::http::header_t>::const_iterator i = _rx_headers.begin(); i != _rx_headers.end(); ++i)
+        {
+            if (boost::iequals(header, i->name))
+                return i->value;
+        }
+        return "";
+    }
+
     size_t http_client::call_context::s_context_count = 0;
     csi::spinlock http_client::call_context::s_spinlock;
 
@@ -338,16 +349,29 @@ namespace csi
         return cursor - (uint8_t*)ptr;
     }
 
-    static size_t parse_headers(void *buffer, size_t size, size_t nmemb, std::vector<std::string>* v)
+    static size_t parse_headers(void *buffer, size_t size, size_t nmemb, std::vector<csi::http::header_t>* v)
     {
         const char *d = (const char*)buffer;
         size_t result = 0;
         if (v)
         {
-            std::string s = "";
-            s.append(d, size * nmemb);
-            v->push_back(s);
-            result = size * nmemb;
+            //std::string s = "";
+            //s.append(d, size * nmemb);
+
+
+            //// add current key/value to headers i request
+            //boost::algorithm::to_lower(c->_current_header_key);
+            //boost::algorithm::to_lower(c->_current_header_val);
+            //v->emplace_back(csi::http::header_t(c->_current_header_key, c->_current_header_val));
+            //c->_current_header_key[0] = 0; // not needed
+            //c->_current_header_val[0] = 0; // not needed
+            //c->_current_header_key_len = 0;
+            //c->_current_header_val_len = 0;
+
+
+            //s.append(d, size * nmemb);
+            //v->push_back(s);
+            //result = size * nmemb;
         }
         return result;
     }
@@ -449,6 +473,7 @@ namespace csi
             request->_curl_headerlist = curl_slist_append(request->_curl_headerlist, i->c_str());
         curl_easy_setopt(request->_curl_easy, CURLOPT_HTTPHEADER, request->_curl_headerlist);
         curl_easy_setopt(request->_curl_easy, CURLOPT_TIMEOUT_MS, request->_timeoutX.count());
+        curl_easy_setopt(request->_curl_easy, CURLOPT_HEADERDATA, &request->_rx_headers);
         curl_easy_setopt(request->_curl_easy, CURLOPT_HEADERFUNCTION, parse_headers);
         curl_easy_setopt(request->_curl_easy, CURLOPT_WRITEHEADER, &request->_rx_headers);
 

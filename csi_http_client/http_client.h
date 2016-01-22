@@ -17,7 +17,7 @@
 #include <avro/Schema.hh>
 #include <csi_http_common/csi_http.h>
 #include <csi_http_common/spinlock.h>
-
+#include <csi_http_common/header.h>
 #pragma once
 
 namespace csi
@@ -83,11 +83,12 @@ namespace csi
             inline csi::http::status_type http_result() const  { return _http_result; }
             inline bool transport_result() const               { return _transport_ok; }
             inline bool ok() const                             { return _transport_ok && (_http_result >= 200) && (_http_result < 300); }
+			std::string get_rx_header(const std::string& header) const;
         private:
             csi::http::method_t                   _method;
             std::string                           _uri;
             std::vector<std::string>              _tx_headers;
-            std::vector<std::string>              _rx_headers;
+            std::vector<csi::http::header_t>      _rx_headers;
             std::chrono::steady_clock::time_point _start_ts;
             std::chrono::steady_clock::time_point _end_ts;
             std::chrono::milliseconds             _timeoutX;
