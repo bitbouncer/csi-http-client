@@ -354,37 +354,20 @@ namespace csi
     static size_t parse_headers(void *buffer, size_t size, size_t nmemb, std::vector<csi::http::header_t>* v)
     {
         size_t sz   = size * nmemb;;
-        char* begin = (char*)  buffer;
-        char* end   = ((char*) buffer)+ sz;
+        char* begin = (char*) buffer;
         if (v)
         {
             char* separator = (char*) memchr(begin, ':', sz);
-            char* newline   = (char*) memchr(begin, '\r', sz);
-            if (separator)
+            char* newline   = (char*) memchr(begin, '\r', sz); // end of value
+            if (separator && newline)
             {
-                std::transform(begin, separator, begin, ::tolower);
+                //since get_rx_header() is case insensitive - no need to transform here
+                //std::transform(begin, separator, begin, ::tolower);
                 char* value_begin = separator + 1;
-                while (isspace(*value_begin)) value_begin++;
+                while (isspace(*value_begin)) value_begin++; // leading white spaces
                 size_t datalen = newline - value_begin;
                 v->emplace_back(csi::http::header_t(std::string(begin, separator), std::string(value_begin, newline)));
             }
-            //std::string s = "";
-            //s.append(d, size * nmemb);
-
-
-            //// add current key/value to headers i request
-            //boost::algorithm::to_lower(c->_current_header_key);
-            //boost::algorithm::to_lower(c->_current_header_val);
-            //v->emplace_back(csi::http::header_t(c->_current_header_key, c->_current_header_val));
-            //c->_current_header_key[0] = 0; // not needed
-            //c->_current_header_val[0] = 0; // not needed
-            //c->_current_header_key_len = 0;
-            //c->_current_header_val_len = 0;
-
-
-            //s.append(d, size * nmemb);
-            //v->push_back(s);
-            //result = size * nmemb;
         }
         return sz;
     }
