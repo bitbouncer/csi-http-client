@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <future>
+#include <algorithm>
 #include <boost/asio.hpp>
 #include <boost/bind.hpp>
 #include <boost/log/core.hpp>
@@ -17,6 +18,7 @@
 #include <boost/thread/mutex.hpp>
 #include <boost/thread/condition_variable.hpp>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string.hpp>
 #include "http_client.h"
 
 namespace csi
@@ -351,10 +353,21 @@ namespace csi
 
     static size_t parse_headers(void *buffer, size_t size, size_t nmemb, std::vector<csi::http::header_t>* v)
     {
-        const char *d = (const char*)buffer;
-        size_t result = 0;
+        size_t sz   = size * nmemb;;
+        char* begin = (char*)  buffer;
+        char* end   = ((char*) buffer)+ sz;
         if (v)
         {
+            char* separator = (char*) memchr(begin, ':', sz);
+            char* newline   = (char*) memchr(begin, '\r', sz);
+            if (separator)
+            {
+                std::transform(begin, separator, begin, ::tolower);
+                char* value_begin = separator + 1;
+                while (isspace(*value_begin)) value_begin++;
+                size_t datalen = newline - value_begin;
+                v->emplace_back(csi::http::header_t(std::string(begin, separator), std::string(value_begin, newline)));
+            }
             //std::string s = "";
             //s.append(d, size * nmemb);
 
@@ -373,7 +386,7 @@ namespace csi
             //v->push_back(s);
             //result = size * nmemb;
         }
-        return result;
+        return sz;
     }
 
     void http_client::perform_async(call_context::handle request, call_context::callback cb)
