@@ -331,7 +331,7 @@ namespace csi
 
         //stream->readBytes((uint8_t*)ptr, sz);
         //size_t sz = csi::readBytes(stream, (uint8_t*)ptr, size*nmemb);
-        //since stream->readBytes((uint8_t*)ptr, sz); throws an exception if we are reading pase end and there is no way of knowing how many bytes thera are - lets loop
+        //since stream->readBytes((uint8_t*)ptr, sz); throws an exception if we are reading past end and there is no way of knowing how many bytes thera are - lets loop
 
         uint8_t* cursor = (uint8_t*)ptr;
 
@@ -475,10 +475,7 @@ namespace csi
         curl_easy_setopt(request->_curl_easy, CURLOPT_TIMEOUT_MS, request->_timeoutX.count());
         curl_easy_setopt(request->_curl_easy, CURLOPT_HEADERDATA, &request->_rx_headers);
         curl_easy_setopt(request->_curl_easy, CURLOPT_HEADERFUNCTION, parse_headers);
-        curl_easy_setopt(request->_curl_easy, CURLOPT_WRITEHEADER, &request->_rx_headers);
-
         curl_easy_setopt(request->_curl_easy, CURLOPT_FOLLOWLOCATION, 1L);
-
         curl_easy_setopt(request->_curl_easy, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
 
         //SSL OPTIONS
