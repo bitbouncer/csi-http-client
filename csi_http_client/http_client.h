@@ -162,9 +162,9 @@ namespace csi
         int                                                     _still_running;
     };
 
-    inline std::shared_ptr<http_client::call_context> create_http_request(csi::http::method_t method, const std::string& uri, const std::vector<std::string>& headers, const std::chrono::milliseconds& timeout)
+    inline std::shared_ptr<http_client::call_context> create_http_request(csi::http::method_t method, const std::string& uri, const std::vector<std::string>& headers, const std::chrono::milliseconds& timeout, bool verbose=false)
     {
-        std::shared_ptr<http_client::call_context> p(new http_client::call_context(method, uri, headers, timeout));
+        std::shared_ptr<http_client::call_context> p(new http_client::call_context(method, uri, headers, timeout, verbose));
         return p;
     }
 
