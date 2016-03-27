@@ -1,6 +1,4 @@
 cmake_minimum_required(VERSION 2.8.1)
-#INCLUDE(${CMAKE_SOURCE_DIR}/../build-scripts/CMakeDependencies.txt)
-#set(EXT_LIBS ${CSI_HTTP_CLIENT_LIBS})
-
+include_directories(${CSI_INCLUDE_PATH} ${CMAKE_SOURCE_DIR})
 add_subdirectory(csi_http_client)
 add_subdirectory(samples)
