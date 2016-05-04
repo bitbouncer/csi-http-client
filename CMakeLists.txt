@@ -5,4 +5,7 @@ include_directories(${CSI_INCLUDE_PATH} ${CMAKE_SOURCE_DIR})
 link_directories(${CSI_LIBRARY_PATH})
 
 add_subdirectory(csi_http_client)
+
+if(__BUILD_EXAMPLES__)
 add_subdirectory(samples)
+endif()
