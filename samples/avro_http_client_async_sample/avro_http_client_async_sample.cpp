@@ -32,7 +32,7 @@ int main(int argc, char **argv)
                 csi::http::POST,
                 "127.0.0.1:8090/rest/avro_sample",
                 request,
-                { "Content-Type:avro/json", "Accept:avro/json" },
+                { "Content-Type:application/json", "Accept:application/json" },
                 std::chrono::milliseconds(1000)),
                 [](csi::http_client::call_context::handle request)
             {
