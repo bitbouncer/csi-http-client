@@ -19,11 +19,13 @@ void handle_get(csi::http_client::call_context* state) {
 int main(int argc, char **argv) {
   boost::asio::io_service io_service;
   boost::log::core::get()->set_filter(boost::log::trivial::severity >= boost::log::trivial::trace);
+  curl_global_init(CURL_GLOBAL_NOTHING); /* minimal */
   csi::http_client handler(io_service);
   /* enter io_service run loop */
   boost::thread th(boost::bind(&boost::asio::io_service::run, &io_service));
 
-  auto result = handler.perform(csi::create_http_request(csi::http::GET, "google.com", {}, std::chrono::milliseconds(1000)), true);
+  //auto result = handler.perform(csi::create_http_request(csi::http::GET, "http://46.166.162.35:9090/load/b0922f3fa8aa/4.m3u8", {}, std::chrono::milliseconds(10000)), true);
+  auto result = handler.perform(csi::create_http_request(csi::http::GET, "google.com", {}, std::chrono::milliseconds(10000)), true);
 
   if(result->ok()) {
     BOOST_LOG_TRIVIAL(info) << "http get: " << result->uri() << " got " << result->rx_content_length() << " bytes, time=" << result->milliseconds() << " ms";
