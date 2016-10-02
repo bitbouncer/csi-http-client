@@ -12,7 +12,7 @@
 #include <curl/curl.h>
 #include <boost/asio.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/chrono/system_clocks.hpp>
+//#include <boost/chrono/system_clocks.hpp>
 #include <boost/function.hpp>
 #include <csi_http_common/csi_http.h>
 #include <csi_http_common/spinlock.h>
@@ -23,6 +23,22 @@ namespace csi {
 class http_client
 {
   public:
+  
+  // dummy implementetation
+  class buffer
+  {
+    public:
+    buffer() { _data.reserve(32*1024);  }
+    void reserve(size_t sz) { _data.reserve(sz); }
+    void append(const uint8_t* p, size_t sz) { _data.insert(_data.end(), p, p+sz); }
+    const uint8_t* data() const { return &_data[0]; }
+    size_t size() const { return _data.size(); }
+
+    private:
+    std::vector<uint8_t> _data;
+  };
+
+
   class call_context
   {
     friend http_client;
@@ -37,9 +53,6 @@ class http_client
       _timeoutX(timeout),
       _http_result(csi::http::undefined),
       _tx_headers(headers),
-      //_avro_tx_buffer(avro::memoryOutputStream()),
-      //_avro_rx_buffer(avro::memoryOutputStream()),
-      //_avro_rx_buffer_writer(*_avro_rx_buffer.get()),
       _curl_easy(NULL),
       _curl_headerlist(NULL),
       _curl_done(false) {
@@ -70,9 +83,12 @@ class http_client
     inline int64_t milliseconds() const { std::chrono::milliseconds duration = std::chrono::duration_cast<std::chrono::milliseconds>(_end_ts - _start_ts); return duration.count(); }
     inline int64_t microseconds() const { std::chrono::microseconds duration = std::chrono::duration_cast<std::chrono::microseconds>(_end_ts - _start_ts); return duration.count(); }
     std::string tx_content() const { return _tx_stream.str(); }
-    std::string rx_content() const { return _rx_stream.str(); }
+    //std::string rx_content() const { return _rx_stream.str(); }
+    const char* rx_content() const { return (const char*) _rx_buffer.data(); }
     inline size_t tx_content_length() const { return _tx_stream.str().size(); }
-    inline size_t rx_content_length() const { return _rx_stream.str().size(); }
+    //inline size_t rx_content_length() const { return _rx_stream.str().size(); }
+    inline size_t rx_content_length() const { return _rx_buffer.size(); }
+    inline int    rx_kb_per_sec() const { auto sz = rx_content_length(); int64_t ms = milliseconds();  return (int) ms == 0 ? 0 : sz / ms;  }
     inline void set_verbose(bool state) { _curl_verbose = state; }
     inline const std::string& uri() const { return _uri; }
     inline csi::http::status_type http_result() const { return _http_result; }
@@ -90,18 +106,12 @@ class http_client
     callback                              _callback;
 
     //TX
-    //std::auto_ptr<avro::OutputStream>     _avro_tx_buffer;
-    //std::auto_ptr<avro::InputStream>      _avro_tx_stream;
-    //avro::StreamReader                    _avro_tx_stream_reader;
-    std::stringstream                       _tx_stream; // temporary for test...
-
+    std::stringstream                     _tx_stream; // temporary for test...
     //RX
-    //std::auto_ptr<avro::OutputStream>     _avro_rx_buffer;
-    //avro::StreamWriter                    _avro_rx_buffer_writer;
-    std::stringstream                       _rx_stream; // temporary for test... must be callback
+    buffer                                _rx_buffer;
 
-    csi::http::status_type                  _http_result;
-    bool                                    _transport_ok;
+    csi::http::status_type                _http_result;
+    bool                                  _transport_ok;
 
     //curl stuff
     CURL*                                 _curl_easy;
@@ -145,15 +155,21 @@ class http_client
   static curl_socket_t  _opensocket_cb(void* user_data, curlsocktype purpose, struct curl_sockaddr *address);
   static int            _closesocket_cb(void* user_data, curl_socket_t item);
 
+  void check_completed();
+
   boost::asio::io_service& _io_service;
   csi::spinlock            _spinlock;
 
   // check all platforms before change
   // boost::asio::steady_timer can compile on linux for now 1.54 ubuntu 13.10
   // using old template instead
-  typedef boost::asio::basic_waitable_timer<boost::chrono::steady_clock> timer;
-  timer                                                   _keepalive_timer;
-  timer                                                   _timer;
+  //typedef boost::asio::basic_waitable_timer<std::chrono::steady_clock> timer;
+  //timer                                                   _keepalive_timer;
+  //timer                                                   _timer;
+
+  boost::asio::steady_timer                               _keepalive_timer;
+  boost::asio::steady_timer                               _timer;
+
   std::map<curl_socket_t, boost::asio::ip::tcp::socket *> _socket_map;
   CURLM*                                                  _multi;
   int                                                     _still_running;

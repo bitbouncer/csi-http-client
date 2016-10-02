@@ -42,18 +42,19 @@ namespace csi {
     curl_multi_setopt(_multi, CURLMOPT_SOCKETDATA, this);
     curl_multi_setopt(_multi, CURLMOPT_TIMERFUNCTION, _multi_timer_cb);
     curl_multi_setopt(_multi, CURLMOPT_TIMERDATA, this);
-    _keepalive_timer.expires_from_now(boost::chrono::milliseconds(1000));
+    _keepalive_timer.expires_from_now(std::chrono::milliseconds(1000));
     _keepalive_timer.async_wait(boost::bind(&http_client::keepalivetimer_cb, this, _1));
   }
 
   http_client::~http_client() {
     close();
-    curl_multi_cleanup(_multi);
   }
 
   void http_client::close() {
+    BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION;
     _keepalive_timer.cancel();
     _timer.cancel();
+    curl_multi_cleanup(_multi);
   }
 
   int http_client::_multi_timer_cb(CURLM *multi, long timeout_ms, void *userp) {
@@ -62,18 +63,19 @@ namespace csi {
 
   /* Update the event timer after curl_multi library calls */
   int http_client::multi_timer_cb(CURLM* multi, long timeout_ms) {
-    BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << ", timeout_ms: " << timeout_ms;
+    //BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << ", timeout_ms: " << timeout_ms;
     /* cancel running timer */
     _timer.cancel();
 
     if(timeout_ms > 0) {
-      _timer.expires_from_now(boost::chrono::milliseconds(timeout_ms));
+      _timer.expires_from_now(std::chrono::milliseconds(timeout_ms));
       _timer.async_wait(boost::bind(&http_client::timer_cb, this, _1));
     } else {
       /* call timeout function immediately */
       boost::system::error_code error; /*success*/
       timer_cb(error);
     }
+    check_completed(); // ska den vara här ???
     return 0;
   }
 
@@ -83,30 +85,76 @@ namespace csi {
       CURLMcode rc = curl_multi_socket_action(_multi, tcp_socket->native_handle(), CURL_CSELECT_IN, &_still_running);
       if(!context->_curl_done)
         tcp_socket->async_read_some(boost::asio::null_buffers(), boost::bind(&http_client::socket_rx_cb, this, boost::asio::placeholders::error, tcp_socket, context));
+      check_completed();
     }
   }
 
   void http_client::socket_tx_cb(const boost::system::error_code& e, boost::asio::ip::tcp::socket * tcp_socket, call_context::handle context) {
-    if(!e)
+    if (!e) {
       CURLMcode rc = curl_multi_socket_action(_multi, tcp_socket->native_handle(), CURL_CSELECT_OUT, &_still_running);
+      check_completed();
+    }
   }
 
   /* Called by asio when our timeout expires */
   void http_client::timer_cb(const boost::system::error_code& e) {
     if(!e) {
-      BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION;
+      //BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION;
       // CURL_SOCKET_TIMEOUT, 0 is corrent on timeouts http://curl.haxx.se/libcurl/c/curl_multi_socket_action.html
       CURLMcode rc = curl_multi_socket_action(_multi, CURL_SOCKET_TIMEOUT, 0, &_still_running);
+      check_completed();
       //check_multi_info(); //TBD kolla om denna ska vara här
     }
   }
 
   void http_client::keepalivetimer_cb(const boost::system::error_code & error) {
     if(!error) {
-      _keepalive_timer.expires_from_now(boost::chrono::milliseconds(1000));
+      _keepalive_timer.expires_from_now(std::chrono::milliseconds(1000));
       _keepalive_timer.async_wait(boost::bind(&http_client::keepalivetimer_cb, this, _1));
     }
   }
+
+  void http_client::check_completed() {
+    /* call curl_multi_perform or curl_multi_socket_action first, then loop
+    through and check if there are any transfers that have completed */
+
+    CURLMsg* m = NULL;
+    do {
+      int msgq = 0;
+      m = curl_multi_info_read(_multi, &msgq);
+      if (m && (m->msg == CURLMSG_DONE)) {
+        CURL *e = m->easy_handle;
+        call_context* context = NULL;
+        curl_easy_getinfo(e, CURLINFO_PRIVATE, &context);
+        assert(context);
+
+        long http_result = 0;
+        CURLcode curl_res = curl_easy_getinfo(e, CURLINFO_RESPONSE_CODE, &http_result);
+        if (curl_res == CURLE_OK)
+          context->_http_result = (csi::http::status_type) http_result;
+        else
+          context->_http_result = (csi::http::status_type) 0;
+
+        context->_end_ts = std::chrono::steady_clock::now();
+        context->_curl_done = true;
+        context->_transport_ok = (http_result > 0);
+
+        BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << ", CURLMSG_DONE, http : " << to_string(context->_method) << " " << context->uri() << " res = " << http_result << " " << context->milliseconds() << " ms";
+        call_context::handle h(context->curl_handle());
+
+        if (context->_callback)
+          context->_callback(h);
+
+        context->curl_stop();
+        curl_easy_setopt(context->_curl_easy, CURLOPT_PRIVATE, NULL);
+        curl_multi_remove_handle(_multi, h->_curl_easy);
+        //_io_service.post(boost::bind(&http_client::_poll_remove, this, h)); // ???? direct call should be possible
+        //curl_multi_remove_handle(_multi, e);
+        //curl_easy_cleanup(e);
+      }
+    } while (m);
+  }
+
 
   /*
   *   user_data            : this set using                     curl_multi_setopt(_multi, CURLMOPT_SOCKETDATA, this);
@@ -122,6 +170,42 @@ namespace csi {
     curl_multi_remove_handle(_multi, h->_curl_easy);
   }
 
+  /*
+  int http_client::sock_cb(CURL *e, curl_socket_t s, int what, void* per_socket_user_data) {
+  if (what == CURL_POLL_REMOVE) {
+  call_context* context = NULL;
+  curl_easy_getinfo(e, CURLINFO_PRIVATE, &context);
+  assert(context);
+  if (!context) {
+  BOOST_LOG_TRIVIAL(warning) << this << ", " << BOOST_CURRENT_FUNCTION << ", CURL_POLL_REMOVE, socket: " << s << " - no context, skipping";
+  return 0;
+  }
+
+  long http_result = 0;
+  CURLcode curl_res = curl_easy_getinfo(e, CURLINFO_RESPONSE_CODE, &http_result);
+  if (curl_res == CURLE_OK)
+  context->_http_result = (csi::http::status_type) http_result;
+  else
+  context->_http_result = (csi::http::status_type) 0;
+
+  context->_end_ts = std::chrono::steady_clock::now();
+  context->_curl_done = true;
+  context->_transport_ok = (http_result > 0);
+
+  BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << ", CURL_POLL_REMOVE, socket: " << s << ", http : " << to_string(context->_method) << " " << context->uri() << " res = " << http_result << " " << context->milliseconds() << " ms";
+  call_context::handle h(context->curl_handle());
+
+  if (context->_callback)
+  context->_callback(h);
+
+  context->curl_stop();
+  curl_easy_setopt(context->_curl_easy, CURLOPT_PRIVATE, NULL);
+  //curl_multi_assign(_multi, s, NULL);
+  _io_service.post(boost::bind(&http_client::_poll_remove, this, h));
+  return 0;
+  }
+  */
+
   int http_client::sock_cb(CURL *e, curl_socket_t s, int what, void* per_socket_user_data) {
     if(what == CURL_POLL_REMOVE) {
       call_context* context = NULL;
@@ -131,85 +215,10 @@ namespace csi {
         BOOST_LOG_TRIVIAL(warning) << this << ", " << BOOST_CURRENT_FUNCTION << ", CURL_POLL_REMOVE, socket: " << s << " - no context, skipping";
         return 0;
       }
-      
-
-      /* call curl_multi_perform or curl_multi_socket_action first, then loop
-      through and check if there are any transfers that have completed */
-
-      CURLMsg* m=NULL;
-      do {
-        int msgq = 0;
-        m = curl_multi_info_read(_multi, &msgq);
-        if (m && (m->msg == CURLMSG_DONE)) {
-          CURL *e = m->easy_handle;
-          call_context* context = NULL;
-          curl_easy_getinfo(e, CURLINFO_PRIVATE, &context);
-          assert(context);
-
-          long http_result = 0;
-          CURLcode curl_res = curl_easy_getinfo(e, CURLINFO_RESPONSE_CODE, &http_result);
-          if (curl_res == CURLE_OK)
-            context->_http_result = (csi::http::status_type) http_result;
-          else
-            context->_http_result = (csi::http::status_type) 0;
-
-          context->_end_ts = std::chrono::steady_clock::now();
-          context->_curl_done = true;
-          context->_transport_ok = (http_result > 0);
-
-          BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << ", CURLMSG_DONE, socket: " << s << ", http : " << to_string(context->_method) << " " << context->uri() << " res = " << http_result << " " << context->milliseconds() << " ms";
-          call_context::handle h(context->curl_handle());
-
-          if (context->_callback)
-            context->_callback(h);
-
-          context->curl_stop();
-          curl_easy_setopt(context->_curl_easy, CURLOPT_PRIVATE, NULL);
-          _io_service.post(boost::bind(&http_client::_poll_remove, this, h));
-          //curl_multi_remove_handle(_multi, e);
-          //curl_easy_cleanup(e);
-        }
-      } while (m);
-  
-
+      // do nothing and hope we get a socket close callback???? kolla om det är rätt...
+      // we cannot close or destroy the boost socket since this in inside callback - it is still used...
       return 0;
     }
-    
-    /*
-    int http_client::sock_cb(CURL *e, curl_socket_t s, int what, void* per_socket_user_data) {
-      if (what == CURL_POLL_REMOVE) {
-        call_context* context = NULL;
-        curl_easy_getinfo(e, CURLINFO_PRIVATE, &context);
-        assert(context);
-        if (!context) {
-          BOOST_LOG_TRIVIAL(warning) << this << ", " << BOOST_CURRENT_FUNCTION << ", CURL_POLL_REMOVE, socket: " << s << " - no context, skipping";
-          return 0;
-        }
-
-        long http_result = 0;
-        CURLcode curl_res = curl_easy_getinfo(e, CURLINFO_RESPONSE_CODE, &http_result);
-        if (curl_res == CURLE_OK)
-          context->_http_result = (csi::http::status_type) http_result;
-        else
-          context->_http_result = (csi::http::status_type) 0;
-
-        context->_end_ts = std::chrono::steady_clock::now();
-        context->_curl_done = true;
-        context->_transport_ok = (http_result > 0);
-
-        BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << ", CURL_POLL_REMOVE, socket: " << s << ", http : " << to_string(context->_method) << " " << context->uri() << " res = " << http_result << " " << context->milliseconds() << " ms";
-        call_context::handle h(context->curl_handle());
-
-        if (context->_callback)
-          context->_callback(h);
-
-        context->curl_stop();
-        curl_easy_setopt(context->_curl_easy, CURLOPT_PRIVATE, NULL);
-        //curl_multi_assign(_multi, s, NULL);
-        _io_service.post(boost::bind(&http_client::_poll_remove, this, h));
-        return 0;
-      }
-    */
 
     boost::asio::ip::tcp::socket* tcp_socket = (boost::asio::ip::tcp::socket*) per_socket_user_data;
     call_context* context = NULL;
@@ -328,7 +337,7 @@ namespace csi {
     {
       csi::spinlock::scoped_lock xxx(_spinlock);
       std::map<curl_socket_t, boost::asio::ip::tcp::socket*>::iterator it = _socket_map.find(item);
-      if(it != _socket_map.end()) {
+      if (it != _socket_map.end()) {
         boost::system::error_code ec;
         it->second->cancel(ec);
         it->second->close(ec);
@@ -344,6 +353,7 @@ namespace csi {
     }
     return 0;
   }
+ 
 
 /*
   static size_t write_callback_std_string(void *ptr, size_t size, size_t nmemb, std::string* s) {
@@ -362,6 +372,15 @@ namespace csi {
     stream->write((char*) ptr, sz);
     return sz;
   }
+
+  static size_t write_callback_buffer(void *ptr, size_t size, size_t nmemb, csi::http_client::buffer* buf) {
+    size_t sz = size*nmemb;
+    BOOST_LOG_TRIVIAL(trace) << BOOST_CURRENT_FUNCTION << ", in size: " << sz;
+    buf->append((const uint8_t*) ptr, sz);
+    return sz;
+  }
+
+  
 
   static size_t read_callback_std_stream(void *ptr, size_t size, size_t nmemb, std::istream* stream) {
     size_t max_sz = size*nmemb;
@@ -455,8 +474,11 @@ namespace csi {
     curl_easy_setopt(request->_curl_easy, CURLOPT_READDATA, &request->_tx_stream);
 
     /* the reply */
-    curl_easy_setopt(request->_curl_easy, CURLOPT_WRITEFUNCTION, write_callback_std_stream);
-    curl_easy_setopt(request->_curl_easy, CURLOPT_WRITEDATA, &request->_rx_stream);
+    //curl_easy_setopt(request->_curl_easy, CURLOPT_WRITEFUNCTION, write_callback_std_stream);
+    //curl_easy_setopt(request->_curl_easy, CURLOPT_WRITEDATA, &request->_rx_stream);
+    curl_easy_setopt(request->_curl_easy, CURLOPT_WRITEFUNCTION, write_callback_buffer);
+    curl_easy_setopt(request->_curl_easy, CURLOPT_WRITEDATA, &request->_rx_buffer);
+
 
     curl_easy_setopt(request->_curl_easy, CURLOPT_PRIVATE, request.get());
     curl_easy_setopt(request->_curl_easy, CURLOPT_LOW_SPEED_TIME, 3L);
