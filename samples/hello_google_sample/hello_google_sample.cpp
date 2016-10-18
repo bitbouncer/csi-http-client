@@ -20,8 +20,8 @@ void handle_get(csi::http_client::call_context* state) {
 
 void log_result(csi::http_client::call_context::handle h) {
   if (h->ok()) {
-    auto sz = h->rx_content_length();
-    int kb_per_sec = 0;
+    size_t sz = h->rx_content_length();
+    size_t kb_per_sec = 0;
     if (h->milliseconds() > 0) {
       kb_per_sec = sz / h->milliseconds();
     }

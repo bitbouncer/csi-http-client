@@ -50,6 +50,10 @@ namespace csi {
     close();
   }
 
+  bool http_client::done() {
+    return (_still_running == 0);
+  }
+
   void http_client::close() {
     BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION;
     _keepalive_timer.cancel();
@@ -139,11 +143,26 @@ namespace csi {
         context->_curl_done = true;
         context->_transport_ok = (http_result > 0);
 
+        std::string content_length_str = context->get_rx_header("Content-Length");
+        if (content_length_str.size()) {
+          if (context->rx_content_length() != atoi(content_length_str.c_str())) {
+            context->_transport_ok = false;
+          }
+        }
+
+
         BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << ", CURLMSG_DONE, http : " << to_string(context->_method) << " " << context->uri() << " res = " << http_result << " " << context->milliseconds() << " ms";
         call_context::handle h(context->curl_handle());
 
-        if (context->_callback)
+        if (context->_callback) {
+          // lets make sure the character in the buffer after the content is NULL
+          // this is convinient to make parsingfast without copying to string...
+          // rapidxml/rapidjson et al...
+          context->_rx_buffer.append(0);
+          context->_rx_buffer.pop_back(); // don't change the size..
+
           context->_callback(h);
+        }
 
         context->curl_stop();
         curl_easy_setopt(context->_curl_easy, CURLOPT_PRIVATE, NULL);

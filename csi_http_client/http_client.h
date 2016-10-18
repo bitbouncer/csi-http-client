@@ -1,5 +1,5 @@
 //
-// header.h
+// http_client.h
 // ~~~~~~~~~~
 // Copyright 2014 Svante Karlsson CSI AB (svante.karlsson at csi dot se)
 //
@@ -12,7 +12,6 @@
 #include <curl/curl.h>
 #include <boost/asio.hpp>
 #include <boost/asio/steady_timer.hpp>
-//#include <boost/chrono/system_clocks.hpp>
 #include <boost/function.hpp>
 #include <csi_http_common/csi_http.h>
 #include <csi_http_common/spinlock.h>
@@ -31,13 +30,14 @@ class http_client
     buffer() { _data.reserve(32*1024);  }
     void reserve(size_t sz) { _data.reserve(sz); }
     void append(const uint8_t* p, size_t sz) { _data.insert(_data.end(), p, p+sz); }
+    void append(uint8_t s) { _data.push_back(s); }
     const uint8_t* data() const { return &_data[0]; }
     size_t size() const { return _data.size(); }
+    void pop_back() { _data.resize(_data.size() - 1); }
 
     private:
     std::vector<uint8_t> _data;
   };
-
 
   class call_context
   {
@@ -83,12 +83,10 @@ class http_client
     inline int64_t milliseconds() const { std::chrono::milliseconds duration = std::chrono::duration_cast<std::chrono::milliseconds>(_end_ts - _start_ts); return duration.count(); }
     inline int64_t microseconds() const { std::chrono::microseconds duration = std::chrono::duration_cast<std::chrono::microseconds>(_end_ts - _start_ts); return duration.count(); }
     std::string tx_content() const { return _tx_stream.str(); }
-    //std::string rx_content() const { return _rx_stream.str(); }
-    const char* rx_content() const { return (const char*) _rx_buffer.data(); }
+    const char* rx_content() const { return _rx_buffer.size() ? (const char*) _rx_buffer.data() : ""; }
     inline size_t tx_content_length() const { return _tx_stream.str().size(); }
-    //inline size_t rx_content_length() const { return _rx_stream.str().size(); }
     inline size_t rx_content_length() const { return _rx_buffer.size(); }
-    inline int    rx_kb_per_sec() const { auto sz = rx_content_length(); int64_t ms = milliseconds();  return (int) ms == 0 ? 0 : sz / ms;  }
+    inline int    rx_kb_per_sec() const { auto sz = rx_content_length(); int64_t ms = milliseconds();  return (int) (ms == 0 ? 0 : sz / ms);  }
     inline void set_verbose(bool state) { _curl_verbose = state; }
     inline const std::string& uri() const { return _uri; }
     inline csi::http::status_type http_result() const { return _http_result; }
@@ -127,6 +125,8 @@ class http_client
   http_client(boost::asio::io_service& io_service);
   ~http_client();
   void close();
+  bool done(); 
+
 
   void perform_async(call_context::handle, call_context::callback cb);
   call_context::handle perform(call_context::handle, bool verbose = false);
