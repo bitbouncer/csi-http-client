@@ -145,7 +145,7 @@ class http_client
   void socket_rx_cb(const boost::system::error_code& e, boost::asio::ip::tcp::socket * tcp_socket, call_context::handle context);
   void socket_tx_cb(const boost::system::error_code& e, boost::asio::ip::tcp::socket * tcp_socket, call_context::handle context);
   void timer_cb(const boost::system::error_code & error);
-  void keepalivetimer_cb(const boost::system::error_code & error);
+  //void keepalivetimer_cb(const boost::system::error_code & error);
   void _asio_closesocket_cb(curl_socket_t item);
 
   //curl callbacks
@@ -166,13 +166,14 @@ class http_client
   //typedef boost::asio::basic_waitable_timer<std::chrono::steady_clock> timer;
   //timer                                                   _keepalive_timer;
   //timer                                                   _timer;
+  //boost::asio::steady_timer                               _keepalive_timer;
 
-  boost::asio::steady_timer                               _keepalive_timer;
   boost::asio::steady_timer                               _timer;
 
   std::map<curl_socket_t, boost::asio::ip::tcp::socket *> _socket_map;
   CURLM*                                                  _multi;
-  int                                                     _still_running;
+  int                                                     _curl_handles_still_running;
+  bool                                                    _closing;
 };
 
 inline std::shared_ptr<http_client::call_context> create_http_request(csi::http::method_t method, const std::string& uri, const std::vector<std::string>& headers, const std::chrono::milliseconds& timeout, bool verbose = false) {

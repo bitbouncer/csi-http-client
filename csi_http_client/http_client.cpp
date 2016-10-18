@@ -36,14 +36,13 @@ namespace csi {
   http_client::http_client(boost::asio::io_service& io_service) :
     _io_service(io_service),
     _timer(_io_service),
-    _keepalive_timer(_io_service) {
+    _closing(false)
+    {
     _multi = curl_multi_init();
     curl_multi_setopt(_multi, CURLMOPT_SOCKETFUNCTION, _sock_cb);
     curl_multi_setopt(_multi, CURLMOPT_SOCKETDATA, this);
     curl_multi_setopt(_multi, CURLMOPT_TIMERFUNCTION, _multi_timer_cb);
     curl_multi_setopt(_multi, CURLMOPT_TIMERDATA, this);
-    _keepalive_timer.expires_from_now(std::chrono::milliseconds(1000));
-    _keepalive_timer.async_wait(boost::bind(&http_client::keepalivetimer_cb, this, _1));
   }
 
   http_client::~http_client() {
@@ -51,14 +50,21 @@ namespace csi {
   }
 
   bool http_client::done() {
-    return (_still_running == 0);
+    return (_curl_handles_still_running == 0);
   }
 
   void http_client::close() {
+    _closing = true;
     BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION;
-    _keepalive_timer.cancel();
     _timer.cancel();
-    curl_multi_cleanup(_multi);
+    if (_multi) {
+      BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << "before curl_multi_cleanup(_multi);";
+      _io_service.post([this]() {
+        BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << ", curl_multi_cleanup(_multi): " << _multi;
+        curl_multi_cleanup(_multi);
+        _multi = NULL;
+      });
+    }
   }
 
   int http_client::_multi_timer_cb(CURLM *multi, long timeout_ms, void *userp) {
@@ -72,8 +78,10 @@ namespace csi {
     _timer.cancel();
 
     if(timeout_ms > 0) {
-      _timer.expires_from_now(std::chrono::milliseconds(timeout_ms));
-      _timer.async_wait(boost::bind(&http_client::timer_cb, this, _1));
+      if (!_closing) {
+        _timer.expires_from_now(std::chrono::milliseconds(timeout_ms));
+        _timer.async_wait(boost::bind(&http_client::timer_cb, this, _1));
+      }
     } else {
       /* call timeout function immediately */
       boost::system::error_code error; /*success*/
@@ -86,7 +94,7 @@ namespace csi {
   void http_client::socket_rx_cb(const boost::system::error_code& e, boost::asio::ip::tcp::socket * tcp_socket, call_context::handle context) {
     if(!e && !context->_curl_done) {
       //BOOST_LOG_TRIVIAL(debug) << "socket_rx_cb " << e << " bytes " << tcp_socket->available();
-      CURLMcode rc = curl_multi_socket_action(_multi, tcp_socket->native_handle(), CURL_CSELECT_IN, &_still_running);
+      CURLMcode rc = curl_multi_socket_action(_multi, tcp_socket->native_handle(), CURL_CSELECT_IN, &_curl_handles_still_running);
       if(!context->_curl_done)
         tcp_socket->async_read_some(boost::asio::null_buffers(), boost::bind(&http_client::socket_rx_cb, this, boost::asio::placeholders::error, tcp_socket, context));
       check_completed();
@@ -95,7 +103,7 @@ namespace csi {
 
   void http_client::socket_tx_cb(const boost::system::error_code& e, boost::asio::ip::tcp::socket * tcp_socket, call_context::handle context) {
     if (!e) {
-      CURLMcode rc = curl_multi_socket_action(_multi, tcp_socket->native_handle(), CURL_CSELECT_OUT, &_still_running);
+      CURLMcode rc = curl_multi_socket_action(_multi, tcp_socket->native_handle(), CURL_CSELECT_OUT, &_curl_handles_still_running);
       check_completed();
     }
   }
@@ -105,19 +113,12 @@ namespace csi {
     if(!e) {
       //BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION;
       // CURL_SOCKET_TIMEOUT, 0 is corrent on timeouts http://curl.haxx.se/libcurl/c/curl_multi_socket_action.html
-      CURLMcode rc = curl_multi_socket_action(_multi, CURL_SOCKET_TIMEOUT, 0, &_still_running);
+      CURLMcode rc = curl_multi_socket_action(_multi, CURL_SOCKET_TIMEOUT, 0, &_curl_handles_still_running);
       check_completed();
       //check_multi_info(); //TBD kolla om denna ska vara här
     }
   }
-
-  void http_client::keepalivetimer_cb(const boost::system::error_code & error) {
-    if(!error) {
-      _keepalive_timer.expires_from_now(std::chrono::milliseconds(1000));
-      _keepalive_timer.async_wait(boost::bind(&http_client::keepalivetimer_cb, this, _1));
-    }
-  }
-
+    
   void http_client::check_completed() {
     /* call curl_multi_perform or curl_multi_socket_action first, then loop
     through and check if there are any transfers that have completed */
@@ -372,7 +373,6 @@ namespace csi {
     }
     return 0;
   }
- 
 
 /*
   static size_t write_callback_std_string(void *ptr, size_t size, size_t nmemb, std::string* s) {
@@ -398,8 +398,6 @@ namespace csi {
     buf->append((const uint8_t*) ptr, sz);
     return sz;
   }
-
-  
 
   static size_t read_callback_std_stream(void *ptr, size_t size, size_t nmemb, std::istream* stream) {
     size_t max_sz = size*nmemb;
