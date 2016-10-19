@@ -149,21 +149,16 @@ class http_client
       });
     }
   }
-
-
-  bool done() {
+  
+  inline bool done() {
     return (_curl_handles_still_running == 0);
   }
 
-  //void perform_async(call_context::handle, call_context::callback cb);
-  //call_context::handle perform(call_context::handle, bool verbose = false);
-  
   void http_client::perform_async(call_context::handle request, call_context::callback cb) {
     request->_callback = cb;
     _io_service.post([this, request]() {
       _perform(request);
     });
-    //_io_service.post(boost::bind(&http_client::_perform, this, request));
   }
 
   csi::http_client::call_context::handle http_client::perform(call_context::handle request, bool verbose) {
@@ -176,7 +171,6 @@ class http_client
     f.wait();
     return f.get();
   }
-
 
   protected:
   void _perform(call_context::handle request) {
@@ -268,15 +262,15 @@ class http_client
     BOOST_LOG_TRIVIAL(debug) << BOOST_CURRENT_FUNCTION << ", method: " << to_string(request->_method) << ", uri: " << request->_uri << ", content_length: " << request->tx_content_length();
     CURLMcode rc = curl_multi_add_handle(_multi, request->_curl_easy);
   }
-  
+
   // must not be called within curl callbacks - post a asio message instead
   void _poll_remove(call_context::handle h) {
     BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << ", handle: " << h->_curl_easy;
     curl_multi_remove_handle(_multi, h->_curl_easy);
   }
-  
+
   // CURL CALLBACKS
-  curl_socket_t _opensocket_cb(void *clientp, curlsocktype purpose, struct curl_sockaddr *address) {
+  static curl_socket_t _opensocket_cb(void *clientp, curlsocktype purpose, struct curl_sockaddr *address) {
     return ((http_client*) clientp)->opensocket_cb(purpose, address);
   }
 
@@ -305,37 +299,36 @@ class http_client
       BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << " open ok, socket: " << sockfd;
       return sockfd;
     }
-    //// IPV6
-    //if (purpose == CURLSOCKTYPE_IPCXN && address->family == AF_INET6)
-    //{
-    //    /* create a tcp socket object */
-    //    boost::asio::ip::tcp::socket *tcp_socket = new boost::asio::ip::tcp::socket(_io_service);
+    // IPV6
+    if (purpose == CURLSOCKTYPE_IPCXN && address->family == AF_INET6)
+    {
+        /* create a tcp socket object */
+        boost::asio::ip::tcp::socket *tcp_socket = new boost::asio::ip::tcp::socket(_io_service);
 
-    //    /* open it and get the native handle*/
-    //    boost::system::error_code ec;
-    //    tcp_socket->open(boost::asio::ip::tcp::v6(), ec);
+        /* open it and get the native handle*/
+        boost::system::error_code ec;
+        tcp_socket->open(boost::asio::ip::tcp::v6(), ec);
+        if (ec)
+        {
+            BOOST_LOG_TRIVIAL(error) << this << ", " << BOOST_CURRENT_FUNCTION << ", open failed, socket: " << ec << ", (" << ec.message() << ")";
+            delete tcp_socket;
+            return CURL_SOCKET_BAD;
+        }
 
-    //    if (ec)
-    //    {
-    //        BOOST_LOG_TRIVIAL(error) << this << ", " << BOOST_CURRENT_FUNCTION << ", open failed, socket: " << ec << ", (" << ec.message() << ")";
-    //        delete tcp_socket;
-    //        return CURL_SOCKET_BAD;
-    //    }
-
-    //    curl_socket_t sockfd = tcp_socket->native_handle();
-    //    /* save it for monitoring */
-    //    {
-    //        csi::http_internal::spinlock::scoped_lock xxx(_spinlock);
-    //        _socket_map.insert(std::pair<curl_socket_t, boost::asio::ip::tcp::socket *>(sockfd, tcp_socket));
-    //    }
-    //    BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << " open ok, socket: " << sockfd;
-    //    return sockfd;
-    //}
+        curl_socket_t sockfd = tcp_socket->native_handle();
+        /* save it for monitoring */
+        {
+            csi::http_internal::spinlock::scoped_lock xxx(_spinlock);
+            _socket_map.insert(std::pair<curl_socket_t, boost::asio::ip::tcp::socket *>(sockfd, tcp_socket));
+        }
+        BOOST_LOG_TRIVIAL(trace) << this << ", " << BOOST_CURRENT_FUNCTION << " open ok, socket: " << sockfd;
+        return sockfd;
+    }
 
     BOOST_LOG_TRIVIAL(error) << "http_client::opensocket_cb unsupported address family";
     return CURL_SOCKET_BAD;
   }
-    
+
   static int _sock_cb(CURL *e, curl_socket_t s, int what, void *user_data, void* per_socket_user_data) {
     return ((http_client*) user_data)->sock_cb(e, s, what, per_socket_user_data);
   }
@@ -417,15 +410,14 @@ class http_client
     }
   }
 
-  void socket_tx_cb(const boost::system::error_code& ec, boost::asio::ip::tcp::socket * tcp_socket, call_context::handle context)     {
+  void socket_tx_cb(const boost::system::error_code& ec, boost::asio::ip::tcp::socket * tcp_socket, call_context::handle context) {
     if (!ec) {
       CURLMcode rc = curl_multi_socket_action(_multi, tcp_socket->native_handle(), CURL_CSELECT_OUT, &_curl_handles_still_running);
       check_completed();
     }
   }
 
-  void timer_cb(const boost::system::error_code & ec)
-  {
+  void timer_cb(const boost::system::error_code & ec) {
     if (!ec) {
       // CURL_SOCKET_TIMEOUT, 0 is corrent on timeouts http://curl.haxx.se/libcurl/c/curl_multi_socket_action.html
       CURLMcode rc = curl_multi_socket_action(_multi, CURL_SOCKET_TIMEOUT, 0, &_curl_handles_still_running);
@@ -435,7 +427,7 @@ class http_client
   }
 
   //void keepalivetimer_cb(const boost::system::error_code & error);
-  void _asio_closesocket_cb(curl_socket_t item);
+  //void _asio_closesocket_cb(curl_socket_t item);
 
   //curl callbacks
   static int _multi_timer_cb(CURLM *multi, long timeout_ms, void *userp) {
@@ -462,9 +454,7 @@ class http_client
     return 0;
   }
 
-    
-  static size_t         _write_cb(void *ptr, size_t size, size_t nmemb, void *data);
-  //static curl_socket_t  _opensocket_cb(void* user_data, curlsocktype purpose, struct curl_sockaddr *address);
+  //static size_t         _write_cb(void *ptr, size_t size, size_t nmemb, void *data);
   
   static int _closesocket_cb(void* user_data, curl_socket_t item) {
     return ((http_client*) user_data)->closesocket_cb(item);
@@ -589,20 +579,9 @@ class http_client
     return sz;
   }
 
-
-  boost::asio::io_service&             _io_service;
-  mutable csi::http_internal::spinlock _spinlock;
-
-  // check all platforms before change
-  // boost::asio::steady_timer can compile on linux for now 1.54 ubuntu 13.10
-  // using old template instead
-  //typedef boost::asio::basic_waitable_timer<std::chrono::steady_clock> timer;
-  //timer                                                   _keepalive_timer;
-  //timer                                                   _timer;
-  //boost::asio::steady_timer                               _keepalive_timer;
-
+  boost::asio::io_service&                                _io_service;
+  mutable csi::http_internal::spinlock                    _spinlock;
   boost::asio::steady_timer                               _timer;
-
   std::map<curl_socket_t, boost::asio::ip::tcp::socket *> _socket_map;
   CURLM*                                                  _multi;
   int                                                     _curl_handles_still_running;
@@ -610,7 +589,6 @@ class http_client
 };
 
 inline std::shared_ptr<http_client::call_context> create_http_request(csi::http::method_t method, const std::string& uri, const std::vector<std::string>& headers, const std::chrono::milliseconds& timeout, bool verbose = false) {
-  std::shared_ptr<http_client::call_context> p(new http_client::call_context(method, uri, headers, timeout, verbose));
-  return p;
+  return std::make_shared<http_client::call_context>(method, uri, headers, timeout, verbose);
 }
 }; // namespace 
